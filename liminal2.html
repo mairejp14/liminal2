@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="UTF-8">
+    <title>Квантарія - Виправлено</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; }
+        #ui { 
+            position: absolute; top: 20px; left: 20px; 
+            color: #fff; font-family: monospace; 
+            background: rgba(0,0,0,0.7); padding: 15px;
+            pointer-events: none; border: 1px solid #444;
+            z-index: 100;
+        }
+    </style>
+</head>
+<body>
+    <div id="ui">
+        <b>КВАНТАРІЯ</b><br>
+        Екран виправлено | Шолом зафіксовано<br>
+        WASD — Рух | Space — Стрибок
+    </div>
+
+    <script type="importmap">
+        { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+
+        const scene = new THREE.Scene();
+        // Near встановлюємо на дуже маленьке значення 0.01, щоб бачити шолом близько
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.01, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        const yawObject = new THREE.Object3D();
+        const pitchObject = new THREE.Object3D();
+        yawObject.add(pitchObject);
+        pitchObject.add(camera);
+        scene.add(yawObject);
+
+        // --- СТВОРЕННЯ ШОЛОМА ---
+        const canvas = document.createElement('canvas');
+        canvas.width = 512; canvas.height = 512;
+        const ctx = canvas.getContext('2d');
+        // Робимо центр трохи більшим, щоб краще бачити
+        const grad = ctx.createRadialGradient(256, 256, 80, 256, 256, 250);
+        grad.addColorStop(0, 'rgba(0,0,0,0)');
+        grad.addColorStop(1, 'rgba(0,0,0,1)');
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, 512, 512);
+
+        const helmetTex = new THREE.CanvasTexture(canvas);
+        // Площина шолома має бути достатньо великою, щоб закрити весь огляд
+        const helmetGeo = new THREE.PlaneGeometry(0.5, 0.5); 
+        const helmetMat = new THREE.MeshBasicMaterial({ map: helmetTex, transparent: true, depthTest: false });
+        const helmetMesh = new THREE.Mesh(helmetGeo, helmetMat);
+        
+        // Відсуваємо шолом на 0.1 від камери
+        helmetMesh.position.set(0, 0, -0.1); 
+        camera.add(helmetMesh);
+
+        // --- СВІТ ТА КУБИ ---
+        const cubeSize = 2;
+        const renderDist = 8;
+        const chunks = new Map();
+        const colliders = [];
+        const cubeGeo = new THREE.BoxGeometry(cubeSize, cubeSize, cubeSize);
+
+        let velocityY = 0;
+        let isGrounded = false;
+        let playerHeight = 1.7;
+        const gravity = 0.008;
+        const jumpPower = 0.25;
+
+        function generateCube(x, y, z) {
+            const key = `${x},${y},${z}`;
+            if (chunks.has(key)) return;
+            if (Math.random() < 0.35) {
+                const hue = Math.random() * 360;
+                const mats = [
+                    new THREE.MeshBasicMaterial({ color: new THREE.Color(`hsl(${hue}, 65%, 45%)`) }),
+                    new THREE.MeshBasicMaterial({ color: new THREE.Color(`hsl(${hue}, 65%, 45%)`) }),
+                    new THREE.MeshBasicMaterial({ color: new THREE.Color(`hsl(${hue}, 65%, 65%)`) }),
+                    new THREE.MeshBasicMaterial({ color: new THREE.Color(`hsl(${hue}, 65%, 25%)`) }),
+                    new THREE.MeshBasicMaterial({ color: new THREE.Color(`hsl(${hue}, 65%, 55%)`) }),
+                    new THREE.MeshBasicMaterial({ color: new THREE.Color(`hsl(${hue}, 65%, 55%)`) })
+                ];
+                const cube = new THREE.Mesh(cubeGeo, mats);
+                cube.position.set(x * cubeSize, y * cubeSize, z * cubeSize);
+                scene.add(cube);
+                colliders.push(new THREE.Box3().setFromObject(cube));
+                chunks.set(key, cube);
+            } else { chunks.set(key, null); }
+        }
+
+        yawObject.position.set(0, 10, 0);
+
+        const keys = {};
+        window.onkeydown = (e) => keys[e.code] = true;
+        window.onkeyup = (e) => keys[e.code] = false;
+        window.onclick = () => document.body.requestPointerLock();
+        
+        window.onmousemove = (e) => {
+            if (document.pointerLockElement) {
+                yawObject.rotation.y -= e.movementX * 0.002;
+                pitchObject.rotation.x -= e.movementY * 0.002;
+                pitchObject.rotation.x = Math.max(-1.5, Math.min(1.5, pitchObject.rotation.x));
+            }
+        };
+
+        function checkCollision(pos, shrinkY = 0) {
+            const pBox = new THREE.Box3().setFromCenterAndSize(pos, new THREE.Vector3(1.0, playerHeight - shrinkY, 1.0));
+            for (let box of colliders) { if (pBox.intersectsBox(box)) return box; }
+            return null;
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            if (!document.pointerLockElement) { renderer.render(scene, camera); return; }
+
+            const pX = Math.round(yawObject.position.x / cubeSize);
+            const pY = Math.round(yawObject.position.y / cubeSize);
+            const pZ = Math.round(yawObject.position.z / cubeSize);
+            for (let x = pX - renderDist; x <= pX + renderDist; x++) {
+                for (let y = pY - renderDist; y <= pY + renderDist; y++) {
+                    for (let z = pZ - renderDist; z <= pZ + renderDist; z++) generateCube(x, y, z);
+                }
+            }
+
+            velocityY -= gravity;
+            yawObject.position.y += velocityY;
+            let hitY = checkCollision(yawObject.position, 0);
+            if (hitY) {
+                if (velocityY < 0) { yawObject.position.y = hitY.max.y + (playerHeight / 2); isGrounded = true; }
+                else { yawObject.position.y = hitY.min.y - (playerHeight / 2); }
+                velocityY = 0;
+            } else { isGrounded = false; }
+
+            if (keys['Space'] && isGrounded) velocityY = jumpPower;
+
+            const speed = 0.12;
+            const dir = new THREE.Vector3();
+            camera.getWorldDirection(dir); dir.y = 0; dir.normalize();
+            const side = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), dir).normalize();
+
+            const move = new THREE.Vector3();
+            if (keys['KeyW']) move.add(dir);
+            if (keys['KeyS']) move.add(dir.clone().negate());
+            if (keys['KeyA']) move.add(side);
+            if (keys['KeyD']) move.add(side.clone().negate());
+            
+            if (move.length() > 0) {
+                move.normalize().multiplyScalar(speed);
+                yawObject.position.x += move.x;
+                if (checkCollision(yawObject.position, 0.1)) yawObject.position.x -= move.x;
+                yawObject.position.z += move.z;
+                if (checkCollision(yawObject.position, 0.1)) yawObject.position.z -= move.z;
+            }
+
+            renderer.render(scene, camera);
+        }
+        animate();
+    </script>
+</body>
+</html>
